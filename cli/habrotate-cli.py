@@ -13,6 +13,7 @@
 print "##### HABrotate #####"
 
 from time import sleep, gmtime, strftime, mktime, time # For delays
+import serial
 import earthmaths # Az/El calculations
 from socket import socket, AF_INET, SOCK_DGRAM # UDP PstRotator interface
 from dateutil import parser
@@ -30,6 +31,9 @@ def load_listener_config(config):
 
 def load_udp_config(config):
     return (str(config["udp_ip"]), int(config["udp_port"]))
+    
+def load_serial_config(config):
+	return (str(config["serial_device"]), int(config["serial_baud"]))
 
 def load_control_config(config):
     return (int(config["hysteresis"]), int(config["overshoot"]))
@@ -43,7 +47,9 @@ def grab_flights():
     flights_string=''
     flights_op = []
     try:
-        flights_json = urlopen('http://habitat.habhub.org/habitat/_design/flight/_view/end_start_including_payloads?startkey=[' + str(int(time())) + ']&include_docs=True')
+        #flights_json = urlopen('http://habitat.habhub.org/habitat/_design/flight/_view/end_start_including_payloads?startkey=[' + str(int(time())) + ']&include_docs=True')
+        flights_json = urlopen('http://habitat.habhub.org/habitat/_design/flight/_view/unapproved_name_including_payloads?startkey=[' + str(int(time())) + ']&include_docs=True')
+
     except:
         print "ERROR: Habitat HTTP Connection Error: ", exc_info()[0]
         exit(1)
@@ -61,7 +67,8 @@ def grab_flights():
     
 def grab_launch_position(flight_id):
     ## Get a list of the payloads in the flight
-    flights_json = urlopen('http://habitat.habhub.org/habitat/_design/flight/_view/end_start_including_payloads?startkey=[' + str(int(time())) + ']&include_docs=True')
+#    flights_json = urlopen('http://habitat.habhub.org/habitat/_design/flight/_view/end_start_including_payloads?startkey=[' + str(int(time())) + ']&include_docs=True')
+    flights_json = urlopen('http://habitat.habhub.org/habitat/_design/flight/_view/unapproved_name_including_payloads?startkey=[' + str(int(time())) + ']&include_docs=True')
     flights = load(flights_json)['rows']
     for flight in flights:
         if(flight["doc"]["type"]=="flight" and flight["doc"]["_id"]==flight_id):
@@ -74,7 +81,9 @@ def grab_launch_position(flight_id):
     
 def grab_position(flight_id):
     ## Get a list of the payloads in the flight
-    flights_json = urlopen('http://habitat.habhub.org/habitat/_design/flight/_view/end_start_including_payloads?startkey=[' + str(int(time())) + ']&include_docs=True')
+#    flights_json = urlopen('http://habitat.habhub.org/habitat/_design/flight/_view/end_start_including_payloads?startkey=[' + str(int(time())) + ']&include_docs=True')
+    flights_json = urlopen('http://habitat.habhub.org/habitat/_design/flight/_view/unapproved_name_including_payloads?startkey=[' + str(int(time())) + ']&include_docs=True')
+
     flights = load(flights_json)['rows']
     for flight in flights:
         if(flight["doc"]["type"]=="flight" and flight["doc"]["_id"]==flight_id):
@@ -149,11 +158,16 @@ except:
 
 config_file.close()
 
+# strFlights ='http://habitat.habhub.org/habitat/_design/flight/_view/end_start_including_payloads?startkey=[' + str(int(time())) + ']&include_docs=True'
+strFlights ='http://habitat.habhub.org/habitat/_design/flight/_view/unapproved_name_including_payloads?startkey=[' + str(int(time())) + ']&include_docs=True'
 listener = load_listener_config(config_json)
 print("Receiver Station Location: Lat: " + str(listener[0]) + " Lon: " + str(listener[1]) + " Altitude: " + str(listener[2]))
 
 udp_config = load_udp_config(config_json)
 print("UDP Configuration: IP: " + str(udp_config[0]) + " Port: " + str(udp_config[1]))
+
+serial_config = load_serial_config(config_json)
+print("Serial Configuration: " + str(serial_config[0]) + " Baud: " + str(serial_config[1]))
 
 control_config = load_control_config(config_json)
 hysteresis = control_config[0]
@@ -191,6 +205,8 @@ while not valid_input:
 
 
 udp_socket = socket( AF_INET, SOCK_DGRAM ) # Open UDP socket
+ser = serial.Serial(str(serial_config[0]), str(serial_config[1]))
+print(ser.name)
 
 loopcount = 0
 update_rotator = 0
@@ -222,11 +238,16 @@ try:
         distance = round(p["straight_distance"]/1000,1)
         print("Balloon Azimuth: " + str(bearing) + " Elevation: " + str(elevation) + " at " + str(distance) + " km.")
         if loopcount == 0: #Set rotator on first loop
+            sleep(10)
             rotator_bearing = bearing
             rotator_elevation = elevation
             print("Moving rotator to Azimuth: " + str(rotator_bearing) + " Elevation: " + str(rotator_elevation))
             udp_string = "<PST><TRACK>0</TRACK><AZIMUTH>" + str(rotator_bearing) + "</AZIMUTH><ELEVATION>" + str(rotator_elevation) + "</ELEVATION></PST>"
+            #serial_string = str(rotator_bearing) + " " + str(rotator_elevation) + "\n"
+            serial_string = str(rotator_bearing) + " " + "85" + "\n"
             udp_socket.sendto(udp_string, udp_config)
+            print(serial_string + "\n")
+            ser.write(serial_string)
         else:
             if bearing > (rotator_bearing + hysteresis):
                 rotator_bearing = (bearing + overshoot)%360
@@ -244,11 +265,16 @@ try:
                 update_rotator = 0
                 print("Moving rotator to Azimuth: " + str(rotator_bearing) + " Elevation: " + str(rotator_elevation))
                 udp_string = "<PST><TRACK>0</TRACK><AZIMUTH>" + str(rotator_bearing) + "</AZIMUTH><ELEVATION>" + str(rotator_elevation) + "</ELEVATION></PST>"
+                # serial_string = str(rotator_bearing) + " " + str(rotator_elevation) + "\n"
+                serial_string = str(rotator_bearing) + " " + "85" + "\n"
                 udp_socket.sendto(udp_string, udp_config)
+                print(serial_string + "\n")
+                ser.write(serial_string)
             else:
                 print ("Current Rotator offset: Azimuth: " + str(rotator_bearing-bearing) + " Elevation: " + str(rotator_elevation-elevation) + ", holding.")
         print("Pausing for 10s...")
         sleep(10)
         loopcount+=1
 except KeyboardInterrupt:
-    print '^C received, Shutting down.'
+	ser.close()
+	print '^C received, Shutting down.'
